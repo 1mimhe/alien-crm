@@ -673,6 +673,9 @@ export function renderDashboardHtml(calls, stats, config) {
         <button id="syncBtn" class="btn btn-sync" onclick="syncWithGoogleSheet()">
           🔄 همگام‌سازی فوری با گوگل شیت
         </button>
+        <button class="btn btn-ghost" onclick="openJsonModal()" title="درج مستقیم متن یا فایل JSON کارتابل">
+          📋 درج دستی JSON
+        </button>
         <a href="/export/csv" class="btn btn-ghost" title="دانلود فایل اکسل">
           📥 اکسل (CSV)
         </a>
@@ -685,11 +688,19 @@ export function renderDashboardHtml(calls, stats, config) {
     <!-- Error Alert if any -->
     ${config && config.error ? `
       <div class="alert-banner">
-        <span style="font-size: 1.4rem;">⚠️</span>
-        <div>
-          <strong>وضعیت اتصال به سامانه CRM:</strong> ${config.error}
-          <div style="font-size: 0.78rem; color: #FCA5A5; margin-top: 3px;">
-            سیستم به صورت خودکار هر ۱۰ دقیقه یک‌بار مجدداً اتصال را بررسی کرده و در صورت انقضای توکن، لاگین خودکار انجام می‌دهد.
+        <span style="font-size: 1.5rem;">⚠️</span>
+        <div style="flex: 1;">
+          <strong>وضعیت اتصال به سرور CRM:</strong> ${config.error}
+          <div style="font-size: 0.8rem; color: #FCA5A5; margin-top: 5px;">
+            راهکار خطای ۵۲۲ (محدودیت دیتاسنتر داخلی در پذیرش اتصالات خارجی): می‌توانید دیتای کارتابل را به سادگی از طریق دکمه‌های زیر بدون وابستگی به شبکه خارجی در گوگل شیت درج نمایید.
+          </div>
+          <div style="margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
+            <button class="btn btn-ghost" style="padding: 6px 14px; font-size: 0.8rem; background: rgba(239,68,68,0.25); border-color: rgba(239,68,68,0.5);" onclick="openJsonModal()">
+              📋 درج دستی متن JSON و ارسال به گوگل شیت
+            </button>
+            <button class="btn btn-ghost" style="padding: 6px 14px; font-size: 0.8rem; background: rgba(59,130,246,0.25); border-color: rgba(59,130,246,0.5);" onclick="syncFromBrowser()">
+              🌐 دریافت مستقیم از مرورگر (Client Sync)
+            </button>
           </div>
         </div>
       </div>
@@ -962,6 +973,287 @@ export function renderDashboardHtml(calls, stats, config) {
       } finally {
         btn.disabled = false;
         btn.innerHTML = '🔄 همگام‌سازی فوری با گوگل شیت';
+      }
+    }
+
+    function copyToClipboard(text, el) {
+      navigator.clipboard.writeText(text).then(() => {
+        const original = el.innerHTML;
+        el.innerHTML = '✓';
+        el.style.color = '#34D399';
+        showToast('📋 شماره ' + text + ' کپی شد.', 'info');
+        setTimeout(() => {
+          el.innerHTML = original;
+          el.style.color = '';
+        }, 1800);
+      });
+    }
+
+    function showLeadDetails(lead) {
+      const modal = document.getElementById('leadModal');
+      const content = document.getElementById('modalContent');
+
+      content.innerHTML = \`
+        <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 20px;">
+          <div class="avatar-initial" style="width: 48px; height: 48px; font-size: 1.2rem;">\${lead.fullName ? lead.fullName.charAt(0) : '؟'}</div>
+          <div>
+            <h2 style="font-size: 1.2rem; font-weight: 800;">\${lead.fullName}</h2>
+            <div style="font-size: 0.8rem; color: var(--text-muted);">\${lead.persona}</div>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 20px; font-size: 0.85rem;">
+          <div style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 10px;">
+            <div style="color: var(--text-sub); font-size: 0.75rem;">شماره تماس:</div>
+            <div style="font-weight: 700; margin-top: 3px;"><a href="\${lead.phoneDialUrl}" style="color: #34D399; text-decoration: none;">📞 \${lead.phone}</a></div>
+          </div>
+          <div style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 10px;">
+            <div style="color: var(--text-sub); font-size: 0.75rem;">سطح اولویت:</div>
+            <div style="font-weight: 700; margin-top: 3px; color: \${lead.priorityColor};">\${lead.priorityCode} - \${lead.priorityName} (امتیاز: \${lead.score})</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 10px;">
+            <div style="color: var(--text-sub); font-size: 0.75rem;">وضعیت فعلی:</div>
+            <div style="font-weight: 700; margin-top: 3px;">\${lead.status} (\${lead.categoryName})</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 10px;">
+            <div style="color: var(--text-sub); font-size: 0.75rem;">مبلغ پیشنهادی / باقیمانده:</div>
+            <div style="font-weight: 700; margin-top: 3px; color: #34D399;">\${lead.proposedAmountFormatted !== '-' ? lead.proposedAmountFormatted : lead.balanceFormatted}</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 10px;">
+            <div style="color: var(--text-sub); font-size: 0.75rem;">منبع و استخر:</div>
+            <div style="font-weight: 600; margin-top: 3px;">\${lead.source} (\${lead.poolName})</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 10px;">
+            <div style="color: var(--text-sub); font-size: 0.75rem;">تعداد عدم پاسخ:</div>
+            <div style="font-weight: 600; margin-top: 3px;">\${lead.noAnswerCount} بار</div>
+          </div>
+        </div>
+
+        <div style="background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.25); border-radius: 12px; padding: 14px; margin-bottom: 20px;">
+          <div style="font-weight: 700; color: #A5B4FC; font-size: 0.84rem; margin-bottom: 6px;">💡 استراتژی و اسکریپت پیشنهادی تماس:</div>
+          <div style="font-size: 0.82rem; line-height: 1.6; color: #E0E7FF;">\${lead.strategy}</div>
+        </div>
+
+        \${lead.nextActionNote !== '-' ? \`
+          <div style="background: rgba(255,255,255,0.03); border-radius: 12px; padding: 12px; margin-bottom: 20px;">
+            <div style="color: var(--text-sub); font-size: 0.75rem;">یادداشت قبلی:</div>
+            <div style="font-size: 0.82rem; color: #93C5FD; margin-top: 4px;">📝 \${lead.nextActionNote}</div>
+          </div>
+        \` : ''}
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+          <a href="\${lead.phoneDialUrl}" class="btn btn-call" style="font-size: 0.9rem; padding: 10px 20px;">
+            📞 برقراری تماس تلفنی
+          </a>
+        </div>
+      \`;
+
+      modal.style.display = 'flex';
+    }
+
+  <!-- JSON Paste Modal -->
+  <div id="jsonModal" class="modal-overlay" onclick="closeJsonModal(event)">
+    <div class="modal-card" style="max-width: 680px;" onclick="event.stopPropagation()">
+      <button class="modal-close" onclick="closeJsonModal()">✕</button>
+      <h2 style="font-size: 1.15rem; font-weight: 800; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+        📋 درج مستقیم متن یا فایل JSON کارتابل
+      </h2>
+      <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px;">
+        در صورت وجود محدودیت شبکه بین‌المللی سرور CRM (خطای ۵۲۲)، می‌توانید خروجی JSON کارتابل را در کادر زیر پیست کنید تا رتبه‌بندی شده و مستقیماً در گوگل شیت درج شود:
+      </p>
+
+      <textarea id="rawJsonInput" style="width: 100%; height: 200px; background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border); border-radius: 12px; padding: 12px; color: #E2E8F0; font-family: monospace; font-size: 0.8rem; outline: none; resize: vertical; margin-bottom: 14px;" placeholder='{"todayLeads": [], "notCalled": [...], "timeSet": [...]}'></textarea>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+        <label class="btn btn-ghost" style="cursor: pointer; font-size: 0.82rem; padding: 8px 14px;">
+          📁 انتخاب فایل json
+          <input type="file" id="jsonFileInput" accept=".json" style="display: none;" onchange="handleFileUpload(event)">
+        </label>
+        <button id="submitJsonBtn" class="btn btn-sync" onclick="submitManualJson()">
+          🚀 پردازش و ارسال به گوگل شیت
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="toast">
+    <span id="toastIcon">✅</span>
+    <span id="toastMsg">عملیات با موفقیت انجام شد</span>
+  </div>
+
+  <script>
+    let activePriority = 'ALL';
+
+    // Live Clock Update
+    function updateClock() {
+      const now = new Date();
+      const timeStr = new Intl.DateTimeFormat('fa-IR', {
+        timeZone: 'Asia/Tehran',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      }).format(now);
+      document.getElementById('liveClock').innerText = '🇮🇷 ' + timeStr;
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    function setPriorityFilter(priority) {
+      activePriority = priority;
+      document.querySelectorAll('.pill-btn').forEach(btn => btn.classList.remove('active'));
+      const buttons = document.querySelectorAll('.pill-btn');
+      for (const b of buttons) {
+        if (b.innerText.includes(priority) || (priority === 'ALL' && b.innerText.includes('همه'))) {
+          b.classList.add('active');
+          break;
+        }
+      }
+      applyFilters();
+    }
+
+    function applyFilters() {
+      const search = document.getElementById('searchInput').value.toLowerCase().trim();
+      const cat = document.getElementById('categorySelect').value;
+      const rows = document.querySelectorAll('#callsTable tbody tr');
+
+      rows.forEach(row => {
+        const rowPriority = row.getAttribute('data-priority');
+        const rowCategory = row.getAttribute('data-category');
+        const rowSearch = row.getAttribute('data-search');
+
+        const matchesPriority = (activePriority === 'ALL' || rowPriority === activePriority);
+        const matchesCategory = (cat === 'ALL' || rowCategory === cat);
+        const matchesSearch = (!search || rowSearch.includes(search));
+
+        if (matchesPriority && matchesCategory && matchesSearch) {
+          row.style.display = '';
+        } else {
+          row.style.display = 'none';
+        }
+      });
+    }
+
+    async function syncWithGoogleSheet() {
+      const btn = document.getElementById('syncBtn');
+      btn.disabled = true;
+      btn.innerHTML = '⏳ در حال همگام‌سازی...';
+
+      try {
+        const res = await fetch('/sync', { method: 'POST' });
+        const result = await res.json();
+
+        if (result.success) {
+          showToast('✅ اطلاعات با موفقیت در گوگل شیت درج و به‌روزرسانی شد.', 'success');
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          showToast('❌ خطا: ' + (result.error || 'بررسی اتصال سرور'), 'error');
+        }
+      } catch (err) {
+        showToast('❌ خطا در ارتباط با سرور: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '🔄 همگام‌سازی فوری با گوگل شیت';
+      }
+    }
+
+    function openJsonModal() {
+      document.getElementById('jsonModal').style.display = 'flex';
+    }
+    function closeJsonModal() {
+      document.getElementById('jsonModal').style.display = 'none';
+    }
+
+    function handleFileUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        document.getElementById('rawJsonInput').value = e.target.result;
+        showToast('فایل JSON بارگذاری شد.', 'info');
+      };
+      reader.readAsText(file);
+    }
+
+    async function submitManualJson() {
+      const input = document.getElementById('rawJsonInput').value.trim();
+      if (!input) {
+        showToast('لطفاً ابتدا متن JSON را در کادر وارد کنید.', 'error');
+        return;
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(input);
+      } catch (err) {
+        showToast('فرمت JSON نامعتبر است: ' + err.message, 'error');
+        return;
+      }
+
+      const btn = document.getElementById('submitJsonBtn');
+      btn.disabled = true;
+      btn.innerHTML = '⏳ در حال ارسال به گوگل شیت...';
+
+      try {
+        const res = await fetch('/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(parsed)
+        });
+        const result = await res.json();
+        if (result.success) {
+          showToast('✅ اطلاعات با موفقیت در گوگل شیت درج و به‌روزرسانی شد.', 'success');
+          closeJsonModal();
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          showToast('❌ خطا در سینک: ' + (result.error || 'ناشناخته'), 'error');
+        }
+      } catch (e) {
+        showToast('❌ خطا در ارسال: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '🚀 پردازش و ارسال به گوگل شیت';
+      }
+    }
+
+    async function syncFromBrowser() {
+      const token = prompt('لطفاً توکن Bearer پنل CRM خود را وارد کنید:');
+      if (!token) return;
+
+      showToast('⏳ در حال دریافت مستقیم اطلاعات از مرورگر شما...', 'info');
+
+      try {
+        const res = await fetch('https://panel.hooshacrm.ir/api/my/cartable', {
+          method: 'GET',
+          headers: {
+            'Authorization': token.startsWith('Bearer ') ? token : 'Bearer ' + token,
+            'Accept': 'application/json'
+          }
+        });
+
+        if (!res.ok) {
+          throw new Error('کد پاسخ سرور: ' + res.status);
+        }
+
+        const data = await res.json();
+        showToast('✅ دیتای کارتابل دریافت شد! در حال ارسال به گوگل شیت...', 'info');
+
+        const syncRes = await fetch('/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+
+        const syncJson = await syncRes.json();
+        if (syncJson.success) {
+          showToast('🎉 همگام‌سازی از طریق مرورگر با موفقیت انجام شد!', 'success');
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          showToast('❌ خطا در سینک: ' + syncJson.error, 'error');
+        }
+      } catch (err) {
+        showToast('❌ امکان اتصال مستقیم مرورگر به سرور وجود ندارد: ' + err.message + ' (لطفاً از گزینه درج دستی JSON استفاده کنید)', 'error');
       }
     }
 

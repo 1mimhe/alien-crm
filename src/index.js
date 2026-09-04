@@ -13,7 +13,8 @@ const DEFAULT_CRM_URL = "https://panel.hooshacrm.ir/api/my/cartable";
  * Fetch cartable leads from CRM API with auto-retry and auto-login on 401
  */
 async function fetchCartableData(env, tokenOverride = null) {
-  const apiUrl = env.CRM_API_URL || env.HOOSHA_API_URL || DEFAULT_CRM_URL;
+  // Support custom Iranian relay URL or direct CRM URL
+  const apiUrl = env.CRM_RELAY_URL || env.CRM_API_URL || env.HOOSHA_API_URL || DEFAULT_CRM_URL;
   let token = tokenOverride || (await getValidBearerToken(env, false));
 
   const doRequest = async (activeToken) => {
@@ -27,7 +28,14 @@ async function fetchCartableData(env, tokenOverride = null) {
     });
   };
 
-  let response = await doRequest(token);
+  let response;
+  try {
+    response = await doRequest(token);
+  } catch (netErr) {
+    throw new Error(
+      `خطای شبکه در اتصال به سرور CRM (${netErr.message}) - احتمالاً به دلیل محدودیت دیتاسنتر داخلی در پذیرش اتصالات خارجی (Error 522).`
+    );
+  }
 
   // If token is expired or unauthorized (401 / 403), trigger auto-login and retry
   if ((response.status === 401 || response.status === 403) && !tokenOverride) {
@@ -47,6 +55,11 @@ async function fetchCartableData(env, tokenOverride = null) {
 
   if (!response.ok) {
     const errText = await response.text().catch(() => "");
+    if (response.status === 522 || errText.includes("522")) {
+      throw new Error(
+        "خطای ۵۲۲ (Connection Timed Out): سرور CRM در دیتاسنتر داخلی ایران قرار دارد و به درخواست‌های خارجی پاسخ نداد. برای همگام‌سازی می‌توانید دیتای JSON را مستقیماً از بخش «درج دستی JSON» در شیت قرار دهید یا از اسکریپت رله استفاده کنید."
+      );
+    }
     throw new Error(`درخواست به سرور CRM با خطا مواجه شد (${response.status}): ${errText}`);
   }
 
@@ -115,9 +128,25 @@ export default {
         });
       }
 
-      // 2. API Endpoint: Returns JSON of prioritized calls
+      // 2. API Endpoint: Returns JSON of prioritized calls (Supports GET or POST with raw json)
       if (path === "/api/calls") {
-        const rawData = await fetchCartableData(env, clientToken);
+        let rawData = null;
+
+        if (request.method === "POST") {
+          try {
+            const body = await request.json();
+            if (body && (body.notCalled || body.timeSet || body.followUp || body.todayLeads)) {
+              rawData = body;
+            } else if (body && body.data) {
+              rawData = body.data;
+            }
+          } catch (e) {}
+        }
+
+        if (!rawData) {
+          rawData = await fetchCartableData(env, clientToken);
+        }
+
         const calls = prioritizeCalls(rawData);
         const stats = computeStats(calls);
 
@@ -156,7 +185,7 @@ export default {
         });
       }
 
-      // 4. Sync to Google Sheets Webhook (Manual or Webhook call)
+      // 4. Sync to Google Sheets Webhook (Supports direct POST with JSON payload from client or auto-fetch)
       if (path === "/sync") {
         const webhookUrl = env.GOOGLE_SHEET_WEBHOOK_URL || url.searchParams.get("webhook");
         if (!webhookUrl) {
@@ -167,12 +196,34 @@ export default {
             }),
             {
               status: 400,
-              headers: { "Content-Type": "application/json; charset=utf-8" },
+              headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" },
             }
           );
         }
 
-        const rawData = await fetchCartableData(env, clientToken);
+        let rawData = null;
+
+        // Check if client sent JSON payload directly in POST body
+        if (request.method === "POST") {
+          try {
+            const body = await request.json();
+            if (body && (body.notCalled || body.timeSet || body.followUp || body.todayLeads || body.noAnswer)) {
+              rawData = body;
+              console.log("Using direct client-provided cartable JSON payload.");
+            } else if (body && body.data && (body.data.notCalled || body.data.timeSet || body.data.followUp)) {
+              rawData = body.data;
+              console.log("Using direct client-provided cartable data object.");
+            }
+          } catch (e) {
+            // Not JSON or empty body, fallback to server fetch
+          }
+        }
+
+        // If no client payload provided, fetch from server
+        if (!rawData) {
+          rawData = await fetchCartableData(env, clientToken);
+        }
+
         const calls = prioritizeCalls(rawData);
         const stats = computeStats(calls);
 
@@ -229,7 +280,7 @@ export default {
       await syncToGoogleSheetWebhook(env.GOOGLE_SHEET_WEBHOOK_URL, calls);
       console.log(`✅ Successfully synced ${calls.length} prioritized leads to Google Sheets.`);
     } catch (err) {
-      console.error("❌ Scheduled sync error:", err);
+      console.error("❌ Scheduled sync error:", err.message);
     }
   },
 };
