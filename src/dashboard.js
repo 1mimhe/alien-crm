@@ -1062,7 +1062,16 @@ export function renderDashboardHtml(calls, stats, config) {
         در صورت وجود محدودیت شبکه بین‌المللی سرور CRM (خطای ۵۲۲)، می‌توانید خروجی JSON کارتابل را در کادر زیر پیست کنید تا رتبه‌بندی شده و مستقیماً در گوگل شیت درج شود:
       </p>
 
-      <textarea id="rawJsonInput" style="width: 100%; height: 200px; background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border); border-radius: 12px; padding: 12px; color: #E2E8F0; font-family: monospace; font-size: 0.8rem; outline: none; resize: vertical; margin-bottom: 14px;" placeholder='{"todayLeads": [], "notCalled": [...], "timeSet": [...]}'></textarea>
+      <div style="margin-bottom: 14px;">
+        <label style="display: block; font-size: 0.78rem; color: #94A3B8; margin-bottom: 5px;">
+          🔗 آدرس وب‌هوک گوگل شیت (Web App URL ساخته شده از Apps Script):
+        </label>
+        <input type="text" id="webhookInput" style="width: 100%; background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; color: #E2E8F0; font-family: monospace; font-size: 0.82rem; outline: none;" placeholder="https://script.google.com/macros/s/.../exec">
+        <div style="font-size: 0.72rem; color: #64748B; margin-top: 4px;">اگر وب‌هوک را در متغیرهای کلودفلر ست نکرده‌اید، لینک را اینجا پیست کنید (در مرورگر شما ذخیره می‌شود).</div>
+      </div>
+
+      <div style="margin-bottom: 6px; font-size: 0.78rem; color: #94A3B8;">متن JSON کارتابل:</div>
+      <textarea id="rawJsonInput" style="width: 100%; height: 180px; background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border); border-radius: 12px; padding: 12px; color: #E2E8F0; font-family: monospace; font-size: 0.8rem; outline: none; resize: vertical; margin-bottom: 14px;" placeholder='{"todayLeads": [], "notCalled": [...], "timeSet": [...]}'></textarea>
 
       <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
         <label class="btn btn-ghost" style="cursor: pointer; font-size: 0.82rem; padding: 8px 14px;">
@@ -1140,8 +1149,11 @@ export function renderDashboardHtml(calls, stats, config) {
       btn.disabled = true;
       btn.innerHTML = '⏳ در حال همگام‌سازی...';
 
+      const webhookVal = localStorage.getItem('crm_webhook') || '';
+      const syncUrl = webhookVal ? ('/sync?webhook=' + encodeURIComponent(webhookVal)) : '/sync';
+
       try {
-        const res = await fetch('/sync', { method: 'POST' });
+        const res = await fetch(syncUrl, { method: 'POST' });
         const result = await res.json();
 
         if (result.success) {
@@ -1149,6 +1161,9 @@ export function renderDashboardHtml(calls, stats, config) {
           setTimeout(() => location.reload(), 1500);
         } else {
           showToast('❌ خطا: ' + (result.error || 'بررسی اتصال سرور'), 'error');
+          if (result.error && result.error.includes('GOOGLE_SHEET_WEBHOOK_URL')) {
+            openJsonModal();
+          }
         }
       } catch (err) {
         showToast('❌ خطا در ارتباط با سرور: ' + err.message, 'error');
@@ -1159,6 +1174,10 @@ export function renderDashboardHtml(calls, stats, config) {
     }
 
     function openJsonModal() {
+      const savedWebhook = localStorage.getItem('crm_webhook');
+      if (savedWebhook && document.getElementById('webhookInput')) {
+        document.getElementById('webhookInput').value = savedWebhook;
+      }
       document.getElementById('jsonModal').style.display = 'flex';
     }
     function closeJsonModal() {
@@ -1191,12 +1210,19 @@ export function renderDashboardHtml(calls, stats, config) {
         return;
       }
 
+      const webhookVal = document.getElementById('webhookInput')?.value.trim() || localStorage.getItem('crm_webhook') || '';
+      if (document.getElementById('webhookInput')?.value.trim()) {
+        localStorage.setItem('crm_webhook', document.getElementById('webhookInput').value.trim());
+      }
+
+      const syncUrl = webhookVal ? ('/sync?webhook=' + encodeURIComponent(webhookVal)) : '/sync';
+
       const btn = document.getElementById('submitJsonBtn');
       btn.disabled = true;
       btn.innerHTML = '⏳ در حال ارسال به گوگل شیت...';
 
       try {
-        const res = await fetch('/sync', {
+        const res = await fetch(syncUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(parsed)
@@ -1207,7 +1233,7 @@ export function renderDashboardHtml(calls, stats, config) {
           closeJsonModal();
           setTimeout(() => location.reload(), 1500);
         } else {
-          showToast('❌ خطا در سینک: ' + (result.error || 'ناشناخته'), 'error');
+          showToast('❌ خطا در ثبت: ' + (result.error || 'ناشناخته'), 'error');
         }
       } catch (e) {
         showToast('❌ خطا در ارسال: ' + e.message, 'error');
