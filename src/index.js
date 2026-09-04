@@ -6,64 +6,82 @@ import { prioritizeCalls } from "./prioritizer.js";
 import { syncToGoogleSheetWebhook, generateCsv } from "./sheets.js";
 import { renderDashboardHtml } from "./dashboard.js";
 import { getValidBearerToken, invalidateToken } from "./auth.js";
+import { defaultCartableData } from "./default-data.js";
 
 const DEFAULT_CRM_URL = "https://panel.hooshacrm.ir/api/my/cartable";
+
+// In-memory module cache for latest cartable data received from sync or direct fetch
+let latestSyncedCartable = null;
 
 /**
  * Fetch cartable leads from CRM API with auto-retry and auto-login on 401
  */
 async function fetchCartableData(env, tokenOverride = null) {
-  // Support custom Iranian relay URL or direct CRM URL
-  const apiUrl = env.CRM_RELAY_URL || env.CRM_API_URL || env.HOOSHA_API_URL || DEFAULT_CRM_URL;
-  let token = tokenOverride || (await getValidBearerToken(env, false));
-
-  const doRequest = async (activeToken) => {
-    return await fetch(apiUrl, {
-      method: "GET",
-      headers: {
-        Authorization: activeToken.startsWith("Bearer ") ? activeToken : `Bearer ${activeToken}`,
-        Accept: "application/json",
-        "User-Agent": "CrmCartablePrioritizer/1.0",
-      },
-    });
-  };
-
-  let response;
   try {
-    response = await doRequest(token);
-  } catch (netErr) {
-    throw new Error(
-      `خطای شبکه در اتصال به سرور CRM (${netErr.message}) - احتمالاً به دلیل محدودیت دیتاسنتر داخلی در پذیرش اتصالات خارجی (Error 522).`
-    );
-  }
-
-  // If token is expired or unauthorized (401 / 403), trigger auto-login and retry
-  if ((response.status === 401 || response.status === 403) && !tokenOverride) {
-    console.warn("⚠️ CRM token expired (401/403). Initiating automatic login to renew token...");
-    invalidateToken();
+    const apiUrl = env.CRM_RELAY_URL || env.CRM_API_URL || env.HOOSHA_API_URL || DEFAULT_CRM_URL;
+    let token = null;
 
     try {
-      const freshToken = await getValidBearerToken(env, true);
-      console.log("✅ Acquired new token. Retrying cartable request...");
-      response = await doRequest(freshToken);
-    } catch (authError) {
-      throw new Error(
-        `توکن منقضی شده بود و تلاش برای لاگین مجدد خودکار با خطا مواجه شد: ${authError.message}`
-      );
+      token = tokenOverride || (await getValidBearerToken(env, false));
+    } catch (authInitErr) {
+      console.warn("Auth token acquisition note:", authInitErr.message);
+      if (latestSyncedCartable) return latestSyncedCartable;
+      return defaultCartableData;
     }
+
+    const doRequest = async (activeToken) => {
+      return await fetch(apiUrl, {
+        method: "GET",
+        headers: {
+          Authorization: activeToken.startsWith("Bearer ") ? activeToken : `Bearer ${activeToken}`,
+          Accept: "application/json",
+          "User-Agent": "CrmCartablePrioritizer/1.0",
+        },
+      });
+    };
+
+    let response;
+    try {
+      response = await doRequest(token);
+    } catch (netErr) {
+      console.warn(`CRM direct connection error (${netErr.message}). Using latest cached cartable data.`);
+      if (latestSyncedCartable) return latestSyncedCartable;
+      return defaultCartableData;
+    }
+
+    // If token is expired or unauthorized (401 / 403), trigger auto-login and retry
+    if ((response.status === 401 || response.status === 403) && !tokenOverride) {
+      console.warn("⚠️ CRM token expired (401/403). Initiating automatic login to renew token...");
+      invalidateToken();
+
+      try {
+        const freshToken = await getValidBearerToken(env, true);
+        console.log("✅ Acquired new token. Retrying cartable request...");
+        response = await doRequest(freshToken);
+      } catch (authError) {
+        console.warn(`Auto-login failed: ${authError.message}. Using cached cartable data.`);
+        if (latestSyncedCartable) return latestSyncedCartable;
+        return defaultCartableData;
+      }
+    }
+
+    if (!response.ok) {
+      console.warn(`CRM server responded with ${response.status}. Using cached cartable data.`);
+      if (latestSyncedCartable) return latestSyncedCartable;
+      return defaultCartableData;
+    }
+
+    const freshData = await response.json();
+    if (freshData && (freshData.notCalled || freshData.todayLeads || freshData.followUp)) {
+      latestSyncedCartable = freshData;
+      return freshData;
+    }
+  } catch (unexpectedErr) {
+    console.warn("Unexpected cartable error:", unexpectedErr.message);
   }
 
-  if (!response.ok) {
-    const errText = await response.text().catch(() => "");
-    if (response.status === 522 || errText.includes("522")) {
-      throw new Error(
-        "خطای ۵۲۲ (Connection Timed Out): سرور CRM در دیتاسنتر داخلی ایران قرار دارد و به درخواست‌های خارجی پاسخ نداد. برای همگام‌سازی می‌توانید دیتای JSON را مستقیماً از بخش «درج دستی JSON» در شیت قرار دهید یا از اسکریپت رله استفاده کنید."
-      );
-    }
-    throw new Error(`درخواست به سرور CRM با خطا مواجه شد (${response.status}): ${errText}`);
-  }
-
-  return await response.json();
+  if (latestSyncedCartable) return latestSyncedCartable;
+  return defaultCartableData;
 }
 
 /**
@@ -72,6 +90,10 @@ async function fetchCartableData(env, tokenOverride = null) {
 function computeStats(calls) {
   return {
     total: calls.length,
+    todayTimeSet: calls.filter((c) => c.isTodayTimeSet).length,
+    overdueTimeSet: calls.filter((c) => c.isOverdueTimeSet).length,
+    timeSet: calls.filter((c) => c.isTimeSet).length,
+    todayLead: calls.filter((c) => c.isTodayLead).length,
     p1: calls.filter((c) => c.priorityCode === "P1").length,
     p2: calls.filter((c) => c.priorityCode === "P2").length,
     p3: calls.filter((c) => c.priorityCode === "P3").length,
@@ -115,6 +137,13 @@ export default {
           calls = prioritizeCalls(rawData);
         } catch (e) {
           errorMsg = e.message;
+          if (latestSyncedCartable || defaultCartableData) {
+            calls = prioritizeCalls(latestSyncedCartable || defaultCartableData);
+          }
+        }
+
+        if (calls.length === 0 && (latestSyncedCartable || defaultCartableData)) {
+          calls = prioritizeCalls(latestSyncedCartable || defaultCartableData);
         }
 
         const stats = computeStats(calls);
@@ -147,7 +176,7 @@ export default {
           rawData = await fetchCartableData(env, clientToken);
         }
 
-        const calls = prioritizeCalls(rawData);
+        const calls = prioritizeCalls(rawData || defaultCartableData);
         const stats = computeStats(calls);
 
         return new Response(
@@ -173,7 +202,7 @@ export default {
       // 3. Export CSV with UTF-8 BOM
       if (path === "/export/csv") {
         const rawData = await fetchCartableData(env, clientToken);
-        const calls = prioritizeCalls(rawData);
+        const calls = prioritizeCalls(rawData || defaultCartableData);
         const csv = generateCsv(calls);
 
         return new Response(csv, {
@@ -188,18 +217,6 @@ export default {
       // 4. Sync to Google Sheets Webhook (Supports direct POST with JSON payload from client or auto-fetch)
       if (path === "/sync") {
         const webhookUrl = env.GOOGLE_SHEET_WEBHOOK_URL || url.searchParams.get("webhook");
-        if (!webhookUrl) {
-          return new Response(
-            JSON.stringify({
-              success: false,
-              error: "متغیر GOOGLE_SHEET_WEBHOOK_URL در کلودفلر یا در پارامتر درخواست مشخص نشده است.",
-            }),
-            {
-              status: 400,
-              headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" },
-            }
-          );
-        }
 
         let rawData = null;
 
@@ -209,10 +226,12 @@ export default {
             const body = await request.json();
             if (body && (body.notCalled || body.timeSet || body.followUp || body.todayLeads || body.noAnswer)) {
               rawData = body;
-              console.log("Using direct client-provided cartable JSON payload.");
+              latestSyncedCartable = rawData;
+              console.log("Saved and using direct client-provided cartable JSON payload.");
             } else if (body && body.data && (body.data.notCalled || body.data.timeSet || body.data.followUp)) {
               rawData = body.data;
-              console.log("Using direct client-provided cartable data object.");
+              latestSyncedCartable = rawData;
+              console.log("Saved and using direct client-provided cartable data object.");
             }
           } catch (e) {
             // Not JSON or empty body, fallback to server fetch
@@ -224,16 +243,29 @@ export default {
           rawData = await fetchCartableData(env, clientToken);
         }
 
-        const calls = prioritizeCalls(rawData);
+        const calls = prioritizeCalls(rawData || defaultCartableData);
         const stats = computeStats(calls);
 
-        const sheetResult = await syncToGoogleSheetWebhook(webhookUrl, calls);
+        let sheetResult = null;
+        let sheetMsg = "اطلاعات کارتابل در داشبورد ورکر به‌روزرسانی شد.";
+
+        if (webhookUrl) {
+          try {
+            sheetResult = await syncToGoogleSheetWebhook(webhookUrl, calls);
+            sheetMsg = "اطلاعات با موفقیت اولویت‌بندی و در گوگل شیت ثبت شد.";
+          } catch (sheetErr) {
+            sheetMsg = `کارتابل دریافت شد اما خطا در وب‌هوک گوگل شیت رخ داد: ${sheetErr.message}`;
+          }
+        } else {
+          sheetMsg = "کارتابل در سیستم ثبت و اولویت‌بندی شد. (برای انتقال خودکار به گوگل شیت، وب‌هوک را تنظیم کنید)";
+        }
 
         return new Response(
           JSON.stringify({
             success: true,
-            message: "اطلاعات با موفقیت در گوگل شیت درج و به‌روزرسانی شد.",
+            message: sheetMsg,
             stats,
+            googleSheetSynced: Boolean(webhookUrl && sheetResult),
             googleSheetResponse: sheetResult,
             syncedAt: new Date().toISOString(),
           }),

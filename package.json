@@ -1,12 +1,11 @@
 {
   "name": "crm-call-prioritizer",
   "version": "1.0.0",
-  "description": "Cloudflare Worker for CRM Cartable call prioritization and Google Sheets synchronization",
-  "main": "src/index.js",
+  "description": "Local CRM Cartable Call Prioritizer & Real-time Sales Dashboard",
+  "main": "sync-local.js",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "start": "node sync-local.js",
     "test:local": "node test/test-prioritizer.js",
     "sync:local": "node sync-local.js"
   },

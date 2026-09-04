@@ -1,5 +1,6 @@
 /**
  * CRM Call Prioritization & Action Planning Engine
+ * Date-Aware Scoring, Commercial Value Calculation & Persian Standardization
  */
 
 // Category labels in Persian
@@ -15,25 +16,41 @@ export const CATEGORY_NAMES = {
   noAnswer: "عدم پاسخ (No Answer)",
 };
 
+// Status labels in Persian
+export const STATUS_NAMES_FA = {
+  NEW: "لید جدید",
+  TIME_SET: "زمان تعیین‌شده",
+  PROMISE_TO_PAY: "قول پرداخت",
+  NEGOTIATING: "در حال مذاکره",
+  NEEDS_CONSULT: "نیازمند مشاوره",
+  FREE_COURSE: "دوره رایگان",
+  NO_ANSWER: "عدم پاسخ",
+  PAID: "پرداخت‌شده",
+  REJECTED: "رد شده",
+  WRONG_OVERLAP: "تداخل اشتباه",
+  FOLLOW_UP: "پیگیری",
+  PAYMENT: "واریز و تسویه",
+};
+
 export const PRIORITY_TIERS = {
   P1: {
     code: "P1",
     name: "فوری و حیاتی",
-    description: "تماس در زمان هماهنگ‌شده یا پیگیری پرداخت فوری",
+    description: "تماس در زمان هماهنگ‌شده، موعد گذشته یا پیگیری پرداخت فوری",
     color: "#EF4444", // Red
     bgColor: "#FEE2E2",
   },
   P2: {
     code: "P2",
     name: "اولویت بالا",
-    description: "ثبت‌نام مجدد یا مذاکره داغ با احتمال تبدیل بالا",
+    description: "ثبت‌نام مجدد یا مذاکره داغ با مبالغ بالا و تمایل خرید",
     color: "#F97316", // Orange
     bgColor: "#FFEDD5",
   },
   P3: {
     code: "P3",
     name: "اولویت متوسط",
-    description: "لیدهای جدید یا متقاضیان نیازمند مشاوره",
+    description: "لیدهای جدید ورودی یا متقاضیان نیازمند مشاوره تلفنی",
     color: "#3B82F6", // Blue
     bgColor: "#DBEAFE",
   },
@@ -47,7 +64,7 @@ export const PRIORITY_TIERS = {
   P5: {
     code: "P5",
     name: "اولویت پایین / اتوماسیون",
-    description: "عدم پاسخ مکرر (+۳ بار)؛ پیشنهاد ارسال پیامک یا بله",
+    description: "عدم پاسخ مکرر (+۳ بار)؛ پیشنهاد ارسال پیامک یا پیام‌رسان",
     color: "#6B7280", // Gray
     bgColor: "#F3F4F6",
   },
@@ -77,6 +94,51 @@ export function formatIranDateTime(isoString) {
 }
 
 /**
+ * Get standard Iran calendar date string (YYYY-MM-DD) in Asia/Tehran timezone
+ */
+export function getIranDateString(dateInput) {
+  if (!dateInput) return null;
+  const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  if (isNaN(date.getTime())) return null;
+
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tehran",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+/**
+ * Check if a date falls on today's calendar day in Iran (Asia/Tehran)
+ */
+export function isTodayInIran(dateInput) {
+  const target = getIranDateString(dateInput);
+  if (!target) return false;
+  return target === getIranDateString(new Date());
+}
+
+/**
+ * Check if a date falls on a past calendar day before today in Iran (Asia/Tehran)
+ */
+export function isPastDayInIran(dateInput) {
+  const target = getIranDateString(dateInput);
+  if (!target) return false;
+  return target < getIranDateString(new Date());
+}
+
+/**
+ * Check if a date falls on tomorrow in Iran (Asia/Tehran)
+ */
+export function isTomorrowInIran(dateInput) {
+  const target = getIranDateString(dateInput);
+  if (!target) return false;
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return target === getIranDateString(tomorrow);
+}
+
+/**
  * Clean and format numbers as Tomans
  */
 export function formatAmount(amount) {
@@ -85,7 +147,7 @@ export function formatAmount(amount) {
 }
 
 /**
- * Generate smart sales strategy and talk track
+ * Generate smart sales strategy and talk track in Persian
  */
 function generateSalesStrategy(lead, category) {
   const note = lead.nextActionNote || lead.conflictNote || "";
@@ -133,7 +195,7 @@ function generateSalesStrategy(lead, category) {
 
   if (lead.status === "NO_ANSWER" || category === "noAnswer") {
     if (lead.noAnswerCount >= 3) {
-      return "عدم پاسخ مکرر (۳+ بار)؛ به جای هدر دادن تایم تماس تلفنی، پیام صوتی/متنی در بله یا پیامک ارسال شود.";
+      return "عدم پاسخ مکرر (۳+ بار)؛ به جای هدر دادن تایم تماس تلفنی، پیام صوتی/متنی در پیام‌رسان یا پیامک ارسال شود.";
     }
     return `عدم پاسخ نوبت ${lead.noAnswerCount || 1}؛ تماس مجدد در ساعات متفاوت (مثلاً عصر ۱۶ الی ۱۸).`;
   }
@@ -142,63 +204,115 @@ function generateSalesStrategy(lead, category) {
 }
 
 /**
- * Score lead from 0 to 100
+ * Score lead from 0 to 100 considering commercial value, status, and precise date urgency
  */
 function calculateLeadScore(lead, category) {
   let score = 50;
+  let dateUrgencyLabel = "";
+  let dateUrgencyColor = "";
+  let dueDiffHours = null;
 
-  // 1. Status & Category Weight
-  if (lead.status === "PROMISE_TO_PAY" || lead.nextActionType === "PAYMENT") {
-    score = 95;
-  } else if (lead.balance && lead.balance > 0) {
-    score = 93;
-  } else if (lead.status === "TIME_SET") {
-    score = 90;
-  } else if (category === "reRegConflict" || lead.isReRegistered) {
-    score = 82;
-  } else if (lead.status === "NEGOTIATING") {
-    score = 78;
-  } else if (lead.status === "NEEDS_CONSULT") {
-    score = 72;
-  } else if (lead.status === "NEW" || category === "notCalled") {
-    score = 68;
-  } else if (lead.status === "FREE_COURSE" || category === "freeCourse") {
-    score = 55;
-  } else if (lead.status === "NO_ANSWER" || category === "noAnswer") {
-    score = 45;
-  }
+  const isTimeSet = lead.status === "TIME_SET" || category === "timeSet";
+  const isTodayDue = isTodayInIran(lead.nextActionDueAt);
+  const isPastDue = isPastDayInIran(lead.nextActionDueAt);
+  const isTomorrowDue = isTomorrowInIran(lead.nextActionDueAt);
+  const isTodayLead = category === "todayLeads" || isTodayInIran(lead.assignedAt || lead.createdAt);
 
-  // 2. Scheduled Due Date urgency
   if (lead.nextActionDueAt) {
     const dueDate = new Date(lead.nextActionDueAt).getTime();
     const now = Date.now();
-    const diffHours = (dueDate - now) / (1000 * 60 * 60);
-
-    if (diffHours < 0) {
-      // Overdue! Needs urgent calling
-      score += 8;
-    } else if (diffHours <= 24) {
-      // Due today
-      score += 6;
-    }
+    dueDiffHours = (dueDate - now) / (1000 * 60 * 60);
   }
 
-  // 3. High intent & amount bonus
+  // 1. Time Set Scoring (Top Priority Category)
+  if (isTimeSet) {
+    if (isTodayDue) {
+      // Scheduled for TODAY: Priority #1
+      score = 100;
+      if (dueDiffHours !== null && dueDiffHours < 0) {
+        dateUrgencyLabel = "🚨 قرار امروز (ساعت گذشته)";
+        dateUrgencyColor = "#EF4444";
+      } else if (dueDiffHours !== null && dueDiffHours <= 3) {
+        dateUrgencyLabel = "⏰ قرار امروز (تا ۳ ساعت دیگر)";
+        dateUrgencyColor = "#F59E0B";
+      } else {
+        dateUrgencyLabel = "📅 قرار تماس امروز (Time Set)";
+        dateUrgencyColor = "#3B82F6";
+      }
+    } else if (isPastDue) {
+      // Overdue Time Set from past days: Priority #2
+      score = 98;
+      const overdueDays = dueDiffHours !== null ? Math.max(1, Math.round(Math.abs(dueDiffHours) / 24)) : 1;
+      dateUrgencyLabel = overdueDays <= 1 ? "⚠️ قرار معوقه دیروز" : `🚨 قرار معوقه (${overdueDays} روز قبل)`;
+      dateUrgencyColor = "#EF4444";
+    } else if (isTomorrowDue) {
+      // Due tomorrow
+      score = 88;
+      dateUrgencyLabel = "📆 قرار تماس فردا";
+      dateUrgencyColor = "#10B981";
+    } else {
+      // Further future (> 48h)
+      score = 75;
+      dateUrgencyLabel = "🗓️ موعد روزهای بعد";
+      dateUrgencyColor = "#6B7280";
+    }
+  } else if (lead.status === "PROMISE_TO_PAY" || lead.nextActionType === "PAYMENT") {
+    score = isTodayDue ? 95 : (isPastDue ? 92 : 88);
+    dateUrgencyLabel = isTodayDue ? "💰 قول پرداخت امروز" : (isPastDue ? "⚠️ قول پرداخت معوقه" : "💳 قول پرداخت");
+    dateUrgencyColor = isTodayDue ? "#10B981" : "#F59E0B";
+  } else if (isTodayLead) {
+    // New inbounds arriving today: Speed to Lead
+    score = 92;
+    dateUrgencyLabel = "⚡️ لید جدید امروز";
+    dateUrgencyColor = "#10B981";
+  } else if (lead.balance && lead.balance > 0) {
+    score = 86;
+    if (isTodayDue) {
+      dateUrgencyLabel = "📅 موعد تسویه امروز";
+      dateUrgencyColor = "#3B82F6";
+    } else if (isPastDue) {
+      dateUrgencyLabel = "⚠️ تسویه معوقه";
+      dateUrgencyColor = "#F97316";
+    }
+  } else if (category === "reRegConflict" || lead.isReRegistered) {
+    score = 82;
+    dateUrgencyLabel = "🔄 ثبت‌نام مجدد";
+    dateUrgencyColor = "#8B5CF6";
+  } else if (lead.status === "NEGOTIATING") {
+    score = isTodayDue ? 85 : (isPastDue ? 80 : 75);
+    if (isTodayDue) {
+      dateUrgencyLabel = "📅 پیگیری مذاکره امروز";
+      dateUrgencyColor = "#3B82F6";
+    } else if (isPastDue) {
+      dateUrgencyLabel = "⚠️ مذاکره معوقه";
+      dateUrgencyColor = "#F97316";
+    }
+  } else if (lead.status === "NEEDS_CONSULT") {
+    score = 70;
+  } else if (lead.status === "NEW" || category === "notCalled") {
+    score = 65;
+  } else if (lead.status === "FREE_COURSE" || category === "freeCourse") {
+    score = 52;
+  } else if (lead.status === "NO_ANSWER" || category === "noAnswer") {
+    score = 40;
+  }
+
+  // 2. Commercial Value & High Intent Bonus
   if (lead.interestLevel === "HIGH") {
-    score += 8;
+    score += 5;
   } else if (lead.interestLevel === "MEDIUM") {
-    score += 3;
+    score += 2;
   }
 
   if (lead.proposedAmount && lead.proposedAmount >= 9000000) {
-    score += 6;
-  }
-
-  if (lead.needsAttention) {
     score += 4;
   }
 
-  // 4. Penalties
+  if (lead.needsAttention) {
+    score += 3;
+  }
+
+  // 3. Penalties
   if (lead.noAnswerCount >= 3) {
     score -= 25;
   } else if (lead.noAnswerCount === 2) {
@@ -209,8 +323,20 @@ function calculateLeadScore(lead, category) {
     score = 10;
   }
 
-  // Clamp 0 - 100
-  return Math.max(0, Math.min(100, Math.round(score)));
+  const finalScore = Math.max(0, Math.min(100, Math.round(score)));
+
+  return {
+    score: finalScore,
+    dateUrgencyLabel: dateUrgencyLabel || (lead.nextActionDueAt ? formatIranDateTime(lead.nextActionDueAt) : "-"),
+    dateUrgencyColor: dateUrgencyColor || "#9CA3AF",
+    dueDiffHours,
+    isTimeSet,
+    isTodayTimeSet: isTimeSet && isTodayDue,
+    isOverdueTimeSet: isTimeSet && isPastDue,
+    isTodayLead,
+    isTodayDue,
+    isPastDue,
+  };
 }
 
 /**
@@ -237,11 +363,11 @@ export function prioritizeCalls(rawCartable) {
 
   const categoryKeys = [
     "timeSet",
+    "todayLeads",
     "followUp",
     "balanceLeads",
     "reRegConflict",
     "notCalled",
-    "todayLeads",
     "freeCourse",
     "noAnswer",
   ];
@@ -279,24 +405,38 @@ export function prioritizeCalls(rawCartable) {
   const prioritizedList = [];
 
   for (const lead of leadMap.values()) {
-    const score = calculateLeadScore(lead, lead.originalCategory);
-    const tier = getPriorityTier(score, lead);
+    const scoringResult = calculateLeadScore(lead, lead.originalCategory);
+    const tier = getPriorityTier(scoringResult.score, lead);
     const strategy = generateSalesStrategy(lead, lead.originalCategory);
     const formattedPhone = lead.phoneNormalized || lead.phoneRaw || "-";
+
+    const statusFa = STATUS_NAMES_FA[lead.status] || lead.status || "لید جدید";
 
     prioritizedList.push({
       id: lead.id,
       fullName: lead.fullName || "بدون نام",
       phone: formattedPhone,
-      phoneDialUrl: formattedPhone.startsWith("+") ? `tel:${formattedPhone}` : `tel:+98${formattedPhone.replace(/^0/, "")}`,
+      phoneDialUrl: formattedPhone.startsWith("+")
+        ? `tel:${formattedPhone}`
+        : `tel:+98${formattedPhone.replace(/^0/, "")}`,
       status: lead.status || "NEW",
+      statusFa,
       categoryKey: lead.originalCategory,
       categoryName: CATEGORY_NAMES[lead.originalCategory] || lead.originalCategory,
       priorityCode: tier.code,
       priorityName: tier.name,
       priorityColor: tier.color,
       priorityBgColor: tier.bgColor,
-      score,
+      score: scoringResult.score,
+      dateUrgencyLabel: scoringResult.dateUrgencyLabel,
+      dateUrgencyColor: scoringResult.dateUrgencyColor,
+      dueDiffHours: scoringResult.dueDiffHours,
+      isTimeSet: scoringResult.isTimeSet,
+      isTodayTimeSet: scoringResult.isTodayTimeSet,
+      isOverdueTimeSet: scoringResult.isOverdueTimeSet,
+      isTodayLead: scoringResult.isTodayLead,
+      isTodayDue: scoringResult.isTodayDue,
+      isPastDue: scoringResult.isPastDue,
       interestLevel: lead.interestLevel || "-",
       persona: lead.personaLabel || lead.persona || "-",
       source: lead.source || "-",
@@ -319,15 +459,76 @@ export function prioritizeCalls(rawCartable) {
     });
   }
 
-  // Sort: High score first; for equal scores, earlier scheduled nextActionDueAt first
+  // ====================================================================
+  // Smart Multi-Stage Sorting Engine:
+  // 1. Today's Time Sets (old -> new: earlier appointment hour today first)
+  // 2. Overdue Time Sets from past days (old -> new: oldest missed first)
+  // 3. Today's New Inbounds (todayLeads: speed to lead, old -> new)
+  // 4. Other Scheduled Calls due today (Promise to Pay / Follow-up today)
+  // 5. Near Future Time Sets (Tomorrow / next 48h, old -> new)
+  // 6. Commercial Score (P1 -> P2 -> P3...)
+  // 7. Earliest Scheduled Due Date (old -> new)
+  // ====================================================================
   prioritizedList.sort((a, b) => {
+    // Stage 1: Today's Time Sets come FIRST, ordered old -> new (earlier time today first)
+    if (a.isTodayTimeSet && !b.isTodayTimeSet) return -1;
+    if (!a.isTodayTimeSet && b.isTodayTimeSet) return 1;
+    if (a.isTodayTimeSet && b.isTodayTimeSet) {
+      return new Date(a.nextActionDueAt).getTime() - new Date(b.nextActionDueAt).getTime();
+    }
+
+    // Stage 2: Overdue Time Sets from past days come NEXT, ordered old -> new (oldest missed appointment first)
+    if (a.isOverdueTimeSet && !b.isOverdueTimeSet) return -1;
+    if (!a.isOverdueTimeSet && b.isOverdueTimeSet) return 1;
+    if (a.isOverdueTimeSet && b.isOverdueTimeSet) {
+      return new Date(a.nextActionDueAt).getTime() - new Date(b.nextActionDueAt).getTime();
+    }
+
+    // Stage 3: Today's New Inbounds (todayLeads / arrived today), ordered old -> new
+    if (a.isTodayLead && !b.isTodayLead) return -1;
+    if (!a.isTodayLead && b.isTodayLead) return 1;
+    if (a.isTodayLead && b.isTodayLead) {
+      const aTime = new Date(a.assignedAt || a.createdAt || 0).getTime();
+      const bTime = new Date(b.assignedAt || b.createdAt || 0).getTime();
+      return aTime - bTime;
+    }
+
+    // Stage 4: Other calls due today (Promise to pay, Follow up due today) (old -> new)
+    if (a.isTodayDue && !b.isTodayDue) return -1;
+    if (!a.isTodayDue && b.isTodayDue) return 1;
+    if (a.isTodayDue && b.isTodayDue && a.nextActionDueAt && b.nextActionDueAt) {
+      return new Date(a.nextActionDueAt).getTime() - new Date(b.nextActionDueAt).getTime();
+    }
+
+    // Stage 5: Near Future Time Sets (Tomorrow / next 48h), ordered old -> new
+    const aIsNearTimeSet = a.isTimeSet && a.dueDiffHours !== null && a.dueDiffHours > 0 && a.dueDiffHours <= 48;
+    const bIsNearTimeSet = b.isTimeSet && b.dueDiffHours !== null && b.dueDiffHours > 0 && b.dueDiffHours <= 48;
+    if (aIsNearTimeSet && !bIsNearTimeSet) return -1;
+    if (!aIsNearTimeSet && bIsNearTimeSet) return 1;
+    if (aIsNearTimeSet && bIsNearTimeSet) {
+      return new Date(a.nextActionDueAt).getTime() - new Date(b.nextActionDueAt).getTime();
+    }
+
+    // Stage 6: Deprioritize far future appointments (> 48 hours)
+    const aIsFar = a.dueDiffHours !== null && a.dueDiffHours > 48;
+    const bIsFar = b.dueDiffHours !== null && b.dueDiffHours > 48;
+    if (aIsFar && !bIsFar) return 1;
+    if (!aIsFar && bIsFar) return -1;
+
+    // Stage 7: Commercial Score descending (P1 -> P2 -> P3...)
     if (b.score !== a.score) {
       return b.score - a.score;
     }
+
+    // Stage 8: Earliest due date (old -> new)
     if (a.nextActionDueAt && b.nextActionDueAt) {
-      return new Date(a.nextActionDueAt) - new Date(b.nextActionDueAt);
+      return new Date(a.nextActionDueAt).getTime() - new Date(b.nextActionDueAt).getTime();
     }
-    return (b.proposedAmount || 0) - (a.proposedAmount || 0);
+    if (a.nextActionDueAt) return -1;
+    if (b.nextActionDueAt) return 1;
+
+    // Stage 9: Proposed amount or balance
+    return (b.proposedAmount || b.balance || 0) - (a.proposedAmount || a.balance || 0);
   });
 
   return prioritizedList;
