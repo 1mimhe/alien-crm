@@ -1,0 +1,23 @@
+{
+  "name": "hoosha-crm-call-prioritizer",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker for Hoosha CRM Cartable call prioritization and Google Sheets synchronization",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test:local": "node test/test-prioritizer.js"
+  },
+  "keywords": [
+    "cloudflare-worker",
+    "crm",
+    "call-prioritization",
+    "google-sheets"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^3.114.0"
+  }
+}
