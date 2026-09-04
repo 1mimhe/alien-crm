@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test:local": "node test/test-prioritizer.js"
+    "test:local": "node test/test-prioritizer.js",
+    "sync:local": "node sync-local.js"
   },
   "keywords": [
     "cloudflare-worker",
