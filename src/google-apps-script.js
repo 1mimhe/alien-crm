@@ -114,7 +114,7 @@ function doGet(e) {
   return ContentService.createTextOutput(
     JSON.stringify({
       status: "active",
-      service: "Hoosha CRM Google Sheets Webhook Receiver",
+      service: "CRM Call Planner Google Sheets Webhook Receiver",
       message: "Send a POST request to update the cartable call plan.",
     })
   ).setMimeType(ContentService.MimeType.JSON);

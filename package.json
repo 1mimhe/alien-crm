@@ -1,7 +1,7 @@
 {
-  "name": "hoosha-crm-call-prioritizer",
+  "name": "crm-call-prioritizer",
   "version": "1.0.0",
-  "description": "Cloudflare Worker for Hoosha CRM Cartable call prioritization and Google Sheets synchronization",
+  "description": "Cloudflare Worker for CRM Cartable call prioritization and Google Sheets synchronization",
   "main": "src/index.js",
   "type": "module",
   "scripts": {

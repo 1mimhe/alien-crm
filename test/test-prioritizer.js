@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 console.log("==================================================");
-console.log("Running Hoosha CRM Call Prioritizer Local Tests...");
+console.log("Running CRM Call Prioritizer Local Tests...");
 console.log("==================================================");
 
 // 1. Read sample cartable json

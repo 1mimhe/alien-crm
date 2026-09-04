@@ -1,38 +1,53 @@
 /**
- * Cloudflare Worker: Hoosha CRM Cartable Call Prioritizer & Google Sheets Sync
+ * Cloudflare Worker: CRM Cartable Call Prioritizer & Google Sheets Sync
  */
 
 import { prioritizeCalls } from "./prioritizer.js";
 import { syncToGoogleSheetWebhook, generateCsv } from "./sheets.js";
 import { renderDashboardHtml } from "./dashboard.js";
+import { getValidBearerToken, invalidateToken } from "./auth.js";
 
-const DEFAULT_HOOSHA_URL = "https://panel.hooshacrm.ir/api/my/cartable";
+const DEFAULT_CRM_URL = "https://panel.hooshacrm.ir/api/my/cartable";
 
 /**
- * Fetch cartable leads from Hoosha CRM API with Bearer Token
+ * Fetch cartable leads from CRM API with auto-retry and auto-login on 401
  */
 async function fetchCartableData(env, tokenOverride = null) {
-  const token = tokenOverride || env.HOOSHA_BEARER_TOKEN;
-  const apiUrl = env.HOOSHA_API_URL || DEFAULT_HOOSHA_URL;
+  const apiUrl = env.CRM_API_URL || env.HOOSHA_API_URL || DEFAULT_CRM_URL;
+  let token = tokenOverride || (await getValidBearerToken(env, false));
 
-  if (!token) {
-    throw new Error(
-      "توکن احراز هویت (HOOSHA_BEARER_TOKEN) در متغیرهای محیطی کلودفلر ورکر تنظیم نشده است."
-    );
+  const doRequest = async (activeToken) => {
+    return await fetch(apiUrl, {
+      method: "GET",
+      headers: {
+        Authorization: activeToken.startsWith("Bearer ") ? activeToken : `Bearer ${activeToken}`,
+        Accept: "application/json",
+        "User-Agent": "CrmCartablePrioritizer/1.0",
+      },
+    });
+  };
+
+  let response = await doRequest(token);
+
+  // If token is expired or unauthorized (401 / 403), trigger auto-login and retry
+  if ((response.status === 401 || response.status === 403) && !tokenOverride) {
+    console.warn("⚠️ CRM token expired (401/403). Initiating automatic login to renew token...");
+    invalidateToken();
+
+    try {
+      const freshToken = await getValidBearerToken(env, true);
+      console.log("✅ Acquired new token. Retrying cartable request...");
+      response = await doRequest(freshToken);
+    } catch (authError) {
+      throw new Error(
+        `توکن منقضی شده بود و تلاش برای لاگین مجدد خودکار با خطا مواجه شد: ${authError.message}`
+      );
+    }
   }
-
-  const response = await fetch(apiUrl, {
-    method: "GET",
-    headers: {
-      Authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}`,
-      Accept: "application/json",
-      "User-Agent": "HooshaCartablePrioritizer/1.0",
-    },
-  });
 
   if (!response.ok) {
     const errText = await response.text().catch(() => "");
-    throw new Error(`درخواست به CRM هوشا با خطا مواجه شد (${response.status}): ${errText}`);
+    throw new Error(`درخواست به سرور CRM با خطا مواجه شد (${response.status}): ${errText}`);
   }
 
   return await response.json();
@@ -135,13 +150,13 @@ export default {
         return new Response(csv, {
           headers: {
             "Content-Type": "text/csv; charset=utf-8",
-            "Content-Disposition": 'attachment; filename="hoosha-cartable-calls.csv"',
+            "Content-Disposition": 'attachment; filename="crm-cartable-calls.csv"',
             "Cache-Control": "no-store",
           },
         });
       }
 
-      // 4. Sync to Google Sheets Webhook
+      // 4. Sync to Google Sheets Webhook (Manual or Webhook call)
       if (path === "/sync") {
         const webhookUrl = env.GOOGLE_SHEET_WEBHOOK_URL || url.searchParams.get("webhook");
         if (!webhookUrl) {
@@ -199,7 +214,7 @@ export default {
   },
 
   /**
-   * Cron Trigger Handler (Automatic Daily Scheduled Sync)
+   * Cron Trigger Handler (Automated Sync every 10 minutes)
    */
   async scheduled(event, env, ctx) {
     if (!env.GOOGLE_SHEET_WEBHOOK_URL) {
@@ -208,13 +223,13 @@ export default {
     }
 
     try {
-      console.log("Running scheduled CRM cartable sync...");
+      console.log("⏰ Running 10-minute scheduled CRM cartable sync...");
       const rawData = await fetchCartableData(env);
       const calls = prioritizeCalls(rawData);
       await syncToGoogleSheetWebhook(env.GOOGLE_SHEET_WEBHOOK_URL, calls);
-      console.log(`Successfully synced ${calls.length} leads to Google Sheets.`);
+      console.log(`✅ Successfully synced ${calls.length} prioritized leads to Google Sheets.`);
     } catch (err) {
-      console.error("Scheduled sync error:", err);
+      console.error("❌ Scheduled sync error:", err);
     }
   },
 };

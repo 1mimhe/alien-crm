@@ -1,5 +1,5 @@
 /**
- * Hoosha CRM Call Prioritization & Action Planning Engine
+ * CRM Call Prioritization & Action Planning Engine
  */
 
 // Category labels in Persian
@@ -128,7 +128,7 @@ function generateSalesStrategy(lead, category) {
   }
 
   if (lead.status === "FREE_COURSE" || category === "freeCourse") {
-    return "بررسی پیشرفت در مینی‌دوره رایگان؛ ایجاد نیاز به یادگیری عمیق‌تر و ارتقا به پکیج‌های جامع هوشا.";
+    return "بررسی پیشرفت در مینی‌دوره رایگان؛ ایجاد نیاز به یادگیری عمیق‌تر و ارتقا به پکیج‌های جامع و تخصصی.";
   }
 
   if (lead.status === "NO_ANSWER" || category === "noAnswer") {
